@@ -3,6 +3,8 @@ AC_INIT([yara], [3.7.0], [vmalvarez@virustotal.com])
 AM_SILENT_RULES([yes])
 AC_CONFIG_SRCDIR([yara.c])
 
+AC_CONFIG_AUX_DIR([build-aux])
+
 AM_INIT_AUTOMAKE([-Wall -Werror foreign subdir-objects])
 
 AC_CONFIG_MACRO_DIR([m4])
@@ -10,6 +12,8 @@ AC_CONFIG_MACRO_DIR([m4])
 # AC_PROG_CC sets CFLAGS to "-g -O2" if it wasn't previously set. Let's set
 # an empty CFLAGS
 : ${CFLAGS=""}
+
+no_std_allocator="-fno-builtin-malloc -fno-builtin-calloc -fno-builtin-realloc -fno-builtin-free"
 
 # automake 1.12 seems to require AM_PROG_AR, but automake 1.11 doesn't
 # recognize it
@@ -36,6 +40,7 @@ case $host_os in
              # are in /usr/local/opt/openssl/include
              CFLAGS="$CFLAGS -DUSE_MACH_PROC -I/usr/local/opt/openssl/include"
              LDFLAGS="$LDFLAGS -L/usr/local/opt/openssl/lib"
+             mach=yes
              proc_interface=mach
              jemalloc_prefix=je_ ;;
     mingw*) CFLAGS="$CFLAGS -DUSE_WINDOWS_PROC"
@@ -91,29 +96,10 @@ AC_ARG_ENABLE([address-sanitizer],
   fi])
 
 AC_ARG_ENABLE([profiling],
-  [AS_HELP_STRING([--enable-profiling], [enable profiling support])],
+  [AS_HELP_STRING([--enable-profiling], [enable rules profiling support])],
   [if test x$enableval = xyes; then
     profiling_enabled=true
     CFLAGS="$CFLAGS -DPROFILING_ENABLED"
-  fi])
-
-AC_ARG_ENABLE([dmalloc],
-  [AS_HELP_STRING([--enable-dmalloc],
-    [enable dmalloc to debug heap-related issues])],
-  [if test x$enableval = xyes; then
-    AC_CHECK_LIB(dmalloc, dmalloc_malloc,,
-      AC_MSG_ERROR([please install dmalloc library]))
-    CFLAGS="$CFLAGS -DDMALLOC"
-  fi])
-
-AC_ARG_ENABLE([jemalloc],
-  [AS_HELP_STRING([--enable-jemalloc],
-    [enable jemalloc to debug heap-related issues])],
-  [if test x$enableval = xyes; then
-      mallctl=mallctl
-      AC_CHECK_LIB(jemalloc, $jemalloc_prefix$mallctl,,
-        AC_MSG_ERROR([please install jemalloc library]))
-    CFLAGS="$CFLAGS -DJEMALLOC -Dmallctl=$jemalloc_prefix$mallctl"
   fi])
 
 AC_ARG_ENABLE([cuckoo],
@@ -154,16 +140,54 @@ AC_ARG_ENABLE([macho],
     CFLAGS="$CFLAGS -DMACHO_MODULE"
   fi])
 
-AC_ARG_WITH([crypto],
-  AS_HELP_STRING([--without-crypto],
-    [ignore presence of OpenSSL and disable it]))
-
 AC_ARG_ENABLE([dex],
   [AS_HELP_STRING([--enable-dex], [enable dex module])],
   [if test x$enableval = xyes; then
     build_dex_module=true
     CFLAGS="$CFLAGS -DDEX_MODULE"
   fi])
+
+AC_ARG_ENABLE([debug-dex],
+  [AS_HELP_STRING([--enable-debug-dex], [enable dex module debugging])],
+  [if test x$enableval = xyes; then
+    debug_dex_module=true
+    CFLAGS="$CFLAGS -DDEBUG_DEX_MODULE"
+  fi])
+
+AC_ARG_WITH([jemalloc],
+  [AS_HELP_STRING([--with-jemalloc],
+    [use jemalloc to debug heap-related issues])],
+  [if test x$withval = xyes; then
+    mallctl=mallctl
+    malloc_stats_print=malloc_stats_print
+    AC_CHECK_LIB(jemalloc, $jemalloc_prefix$mallctl,,
+        AC_MSG_ERROR([please install jemalloc library]))
+    CFLAGS="$CFLAGS -DJEMALLOC -Dmallctl=$jemalloc_prefix$mallctl -Dmalloc_stats_print=$jemalloc_prefix$malloc_stats_print $no_std_allocator"
+  fi])
+
+AC_ARG_WITH([tcmalloc],
+  [AS_HELP_STRING([--with-tcmalloc],
+    [use tcmalloc as the default heap allocator])],
+  [if test x$withval = xyes; then
+    if test "x$with_jemalloc" = "xyes"; then
+      AC_MSG_ERROR([Cannot compile with both tcmalloc and jemalloc])
+    fi
+    AC_CHECK_LIB(tcmalloc, tc_cfree,,
+      AC_MSG_ERROR([please install https://github.com/gperftools/gperftools]))
+    CFLAGS="$CFLAGS -DTCMALLOC $no_std_allocator"
+  fi])
+
+AC_ARG_WITH([cpu-profiler],
+  [AS_HELP_STRING([--with-cpu-profiler],
+    [compile with CPU profiling support])],
+  [if test x$withval = xyes; then
+    AC_CHECK_LIB(profiler, ProfilerStart,,
+      AC_MSG_ERROR([please install https://github.com/gperftools/gperftools]))
+  fi])
+
+AC_ARG_WITH([crypto],
+  AS_HELP_STRING([--without-crypto],
+    [ignore presence of OpenSSL and disable it]))
 
 AS_IF([test "x$with_crypto" != "xno"],
   [
@@ -245,6 +269,12 @@ AS_IF([test "x$have_crypto" = "xno"],
     PC_REQUIRES_PRIVATE="$PC_REQUIRES_PRIVATE libcrypto"
   ])
 
+AS_IF([test "x$mach" != "xyes"],
+  [
+    AC_CHECK_FUNCS([clock_gettime],,
+      AC_MSG_ERROR([clock_gettime not supported in your OS.]))
+  ],)
+
 AM_CONDITIONAL([DEBUG], [test x$debug = xtrue])
 AM_CONDITIONAL([PROFILING_ENABLED], [test x$profiling_enabled = xtrue])
 AM_CONDITIONAL([OPTIMIZATION], [test x$optimization = xtrue])
@@ -256,6 +286,7 @@ AM_CONDITIONAL([DOTNET_MODULE], [test x$build_dotnet_module = xtrue])
 AM_CONDITIONAL([MACHO_MODULE], [test x$build_macho_module = xtrue])
 AM_CONDITIONAL([GCC], [test "x$GCC" = xyes])
 AM_CONDITIONAL([DEX_MODULE], [test x$build_dex_module = xtrue])
+AM_CONDITIONAL([DEBUG_DEX_MODULE], [test x$debug_dex_module = xtrue])
 
 AM_CONDITIONAL([USE_WINDOWS_PROC], [test x$proc_interface = xwindows ])
 AM_CONDITIONAL([USE_LINUX_PROC], [test x$proc_interface = xlinux ])

@@ -304,6 +304,14 @@ static void test_bitwise_operators()
       "rule test { condition: 1 >> 64 == 0 }",
       NULL);
 
+  assert_error(
+      "rule test { condition: 1 << -1 == 0 }",
+      ERROR_INVALID_OPERAND);
+
+  assert_error(
+      "rule test { condition: 1 >> -1 == 0 }",
+      ERROR_INVALID_OPERAND);
+
   assert_true_rule(
       "rule test { condition: 1 | 3 ^ 3 == 1 | (3 ^ 3) }",
       NULL);
@@ -432,6 +440,14 @@ static void test_strings()
       "rule test { strings: $a = \"abc\" fullword condition: $a }",
       "abcx");
 
+  assert_false_rule_blob(
+      "rule test { strings: $a = \"abc\" wide condition: $a }",
+      "a\1b\0c\0d\0e\0f\0");
+
+  assert_false_rule_blob(
+      "rule test { strings: $a = \"abcdef\" wide condition: $a }",
+      "a\0b\0c\0d\0e\0f\1");
+
   assert_false_rule(
       "rule test { strings: $a = \"abc\" ascii wide fullword condition: $a }",
       "abcx");
@@ -469,6 +485,38 @@ static void test_strings()
          condition:\n\
              all of them\n\
        }", "abcdef");
+
+  assert_true_rule_file(
+    "rule test {\n\
+      strings:\n\
+        $a = \"This program cannot\" xor\n\
+      condition:\n\
+        #a == 255\n\
+    }", "tests/data/xor.out");
+
+  assert_true_rule_file(
+    "rule test {\n\
+      strings:\n\
+        $a = \"This program cannot\" xor ascii\n\
+      condition:\n\
+        #a == 256\n\
+    }", "tests/data/xor.out");
+
+  assert_true_rule_file(
+    "rule test {\n\
+      strings:\n\
+        $a = \"This program cannot\" xor wide\n\
+      condition:\n\
+        #a == 256\n\
+    }", "tests/data/xorwide.out");
+
+  assert_true_rule_file(
+    "rule test {\n\
+      strings:\n\
+        $a = \"ab\" xor nocase\n\
+      condition:\n\
+        #a == 1084\n\
+    }", "tests/data/xornocase.out");
 }
 
 

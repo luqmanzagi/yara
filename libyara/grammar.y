@@ -139,6 +139,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 %token <sized_string> _REGEXP_
 %token _ASCII_
 %token _WIDE_
+%token _XOR_
 %token _NOCASE_
 %token _FULLWORD_
 %token _AT_
@@ -571,6 +572,7 @@ string_modifier
     | _ASCII_       { $$ = STRING_GFLAGS_ASCII; }
     | _NOCASE_      { $$ = STRING_GFLAGS_NO_CASE; }
     | _FULLWORD_    { $$ = STRING_GFLAGS_FULL_WORD; }
+    | _XOR_         { $$ = STRING_GFLAGS_XOR; }
     ;
 
 
@@ -1965,12 +1967,16 @@ primary_expression
 
         yr_parser_emit(yyscanner, OP_SHL, NULL);
 
-        if (!IS_UNDEFINED($3.value.integer) && $3.value.integer >= 64)
+        if (!IS_UNDEFINED($3.value.integer) && $3.value.integer < 0)
+          compiler->last_result = ERROR_INVALID_OPERAND;
+        else if (!IS_UNDEFINED($3.value.integer) && $3.value.integer >= 64)
           $$.value.integer = 0;
         else
           $$.value.integer = OPERATION(<<, $1.value.integer, $3.value.integer);
 
         $$.type = EXPRESSION_TYPE_INTEGER;
+
+        fail_if(compiler->last_result != ERROR_SUCCESS);
       }
     | primary_expression _SHIFT_RIGHT_ primary_expression
       {
@@ -1979,12 +1985,16 @@ primary_expression
 
         yr_parser_emit(yyscanner, OP_SHR, NULL);
 
-        if (!IS_UNDEFINED($3.value.integer) && $3.value.integer >= 64)
+        if (!IS_UNDEFINED($3.value.integer) && $3.value.integer < 0)
+          compiler->last_result = ERROR_INVALID_OPERAND;
+        else if (!IS_UNDEFINED($3.value.integer) && $3.value.integer >= 64)
           $$.value.integer = 0;
         else
           $$.value.integer = OPERATION(<<, $1.value.integer, $3.value.integer);
 
         $$.type = EXPRESSION_TYPE_INTEGER;
+        
+        fail_if(compiler->last_result != ERROR_SUCCESS);
       }
     | regexp
       {

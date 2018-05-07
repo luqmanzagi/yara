@@ -202,6 +202,76 @@ void test_max_string_per_rules()
 }
 
 
+int test_max_match_data_callback(
+    int message,
+    void* message_data,
+    void* user_data)
+{
+  if (message == CALLBACK_MSG_RULE_MATCHING)
+  {
+    YR_RULE* r = (YR_RULE*) message_data;
+    YR_STRING* s;
+
+    yr_rule_strings_foreach(r, s)
+    {
+      YR_MATCH* m;
+
+      yr_string_matches_foreach(s, m)
+      {
+        if (m->data_length > 0)
+          return CALLBACK_ERROR;
+      }
+    }
+  }
+
+  return CALLBACK_CONTINUE;
+}
+
+void test_max_match_data()
+{
+  YR_RULES* rules;
+
+  uint32_t new_max_match_data = 0;
+  uint32_t old_max_match_data;
+
+  char* rules_str = " \
+    rule t { strings: $a = \"foobar\" condition: $a }";
+
+  yr_initialize();
+
+  yr_get_configuration(
+      YR_CONFIG_MAX_MATCH_DATA,
+      (void*) &old_max_match_data);
+
+  yr_set_configuration(
+      YR_CONFIG_MAX_MATCH_DATA,
+      (void*) &new_max_match_data);
+
+  if (compile_rule(rules_str, &rules) != ERROR_SUCCESS)
+  {
+    perror("compile_rule");
+    exit(EXIT_FAILURE);
+  }
+
+  int err = yr_rules_scan_mem(
+      rules,
+      (const uint8_t *) "foobar",
+      6,
+      0,
+      test_max_match_data_callback,
+      NULL,
+      0);
+
+  if (err != ERROR_SUCCESS)
+  {
+    fprintf(stderr, "test_max_match_data failed");
+    exit(EXIT_FAILURE);
+  }
+
+  yr_finalize();
+}
+
+
 void test_save_load_rules()
 {
   YR_COMPILER* compiler = NULL;
@@ -365,6 +435,61 @@ void test_scanner()
   yr_finalize();
 }
 
+// Test case for https://github.com/VirusTotal/yara/issues/834. Use the same
+// scanner for scanning multiple files with a rule that imports the "tests"
+// module. If the unload_module function is called twice an assertion is
+// triggered by the module.
+void test_issue_834()
+{
+  const char* buf = "dummy";
+  const char* rules_str = "import \"tests\" rule test { condition: true }";
+
+  YR_COMPILER* compiler = NULL;
+  YR_RULES* rules = NULL;
+  YR_SCANNER* scanner = NULL;
+
+  yr_initialize();
+
+  if (yr_compiler_create(&compiler) != ERROR_SUCCESS)
+  {
+    perror("yr_compiler_create");
+    exit(EXIT_FAILURE);
+  }
+
+  if (yr_compiler_add_string(compiler, rules_str, NULL) != 0)
+  {
+    yr_compiler_destroy(compiler);
+    perror("yr_compiler_add_string");
+    exit(EXIT_FAILURE);
+  }
+
+  if (yr_compiler_get_rules(compiler, &rules) != ERROR_SUCCESS)
+  {
+    yr_compiler_destroy(compiler);
+    perror("yr_compiler_get_rules");
+    exit(EXIT_FAILURE);
+  }
+
+  yr_compiler_destroy(compiler);
+
+  if (yr_scanner_create(rules, &scanner)!= ERROR_SUCCESS)
+  {
+    yr_rules_destroy(rules);
+    perror("yr_scanner_create");
+    exit(EXIT_FAILURE);
+  }
+
+  yr_scanner_set_callback(scanner, do_nothing, NULL);
+
+  // Call yr_scanner_scan_mem twice.
+  yr_scanner_scan_mem(scanner, (uint8_t *) buf, strlen(buf));
+  yr_scanner_scan_mem(scanner, (uint8_t *) buf, strlen(buf));
+
+  yr_scanner_destroy(scanner);
+  yr_rules_destroy(rules);
+  yr_finalize();
+}
+
 
 void ast_callback(
     const YR_RULE* rule,
@@ -426,8 +551,10 @@ int main(int argc, char** argv)
   test_disabled_rules();
   test_file_descriptor();
   test_max_string_per_rules();
+  test_max_match_data();
   test_include_callback();
   test_save_load_rules();
   test_scanner();
   test_ast_callback();
+  test_issue_834();
 }

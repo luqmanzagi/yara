@@ -316,6 +316,7 @@ static int _yr_parser_write_string(
       offsetof(YR_STRING, identifier),
       offsetof(YR_STRING, string),
       offsetof(YR_STRING, chained_to),
+      offsetof(YR_STRING, rule),
       EOL);
 
   if (result != ERROR_SUCCESS)
@@ -358,9 +359,10 @@ static int _yr_parser_write_string(
   (*string)->g_flags = flags;
   (*string)->chained_to = NULL;
   (*string)->fixed_offset = UNDEFINED;
+  (*string)->rule = compiler->current_rule;
 
   #ifdef PROFILING_ENABLED
-  (*string)->clock_ticks = 0;
+  (*string)->time_cost = 0;
   #endif
 
   memset((*string)->matches, 0,
@@ -495,7 +497,8 @@ YR_STRING* yr_parser_reduce_string_declaration(
   if (strcmp(identifier,"$") == 0)
     string_flags |= STRING_GFLAGS_ANONYMOUS;
 
-  if (!(string_flags & STRING_GFLAGS_WIDE))
+  if (!(string_flags & STRING_GFLAGS_WIDE) &&
+      !(string_flags & STRING_GFLAGS_XOR))
     string_flags |= STRING_GFLAGS_ASCII;
 
   // Hex strings are always handled as DOT_ALL regexps.
@@ -756,7 +759,7 @@ YR_RULE* yr_parser_reduce_rule_declaration_phase_1(
   rule->ns = compiler->current_namespace;
 
   #ifdef PROFILING_ENABLED
-  rule->clock_ticks = 0;
+  rule->time_cost = 0;
   #endif
 
   compiler->last_result = yr_arena_write_string(

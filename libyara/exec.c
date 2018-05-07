@@ -31,7 +31,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <string.h>
 #include <assert.h>
-#include <time.h>
 #include <math.h>
 
 #include <yara/arena.h>
@@ -153,8 +152,7 @@ static const uint8_t* jmp_if(
 
 
 int yr_execute_code(
-    YR_SCAN_CONTEXT* context,
-    time_t start_time)
+    YR_SCAN_CONTEXT* context)
 {
   int64_t mem[MEM_SIZE];
   int32_t sp = 0;
@@ -167,8 +165,10 @@ int yr_execute_code(
   YR_VALUE r2;
   YR_VALUE r3;
 
+  uint64_t elapsed_time;
+
   #ifdef PROFILING_ENABLED
-  YR_STOPWATCH stopwatch;
+  uint64_t start_time;
   YR_RULE* current_rule = NULL;
   #endif
 
@@ -206,7 +206,7 @@ int yr_execute_code(
       yr_free(stack));
 
   #ifdef PROFILING_ENABLED
-  yr_stopwatch_start(&stopwatch);
+  start_time = yr_stopwatch_elapsed_us(&context->stopwatch);
   #endif
 
   while(!stop)
@@ -373,7 +373,9 @@ int yr_execute_code(
         pop(r1);
         ensure_defined(r2);
         ensure_defined(r1);
-        if (r2.i < 64)
+        if (r2.i < 0)
+          r1.i = UNDEFINED;
+        else if (r2.i < 64)
           r1.i = r1.i >> r2.i;
         else
           r1.i = 0;
@@ -385,7 +387,9 @@ int yr_execute_code(
         pop(r1);
         ensure_defined(r2);
         ensure_defined(r1);
-        if (r2.i < 64)
+        if (r2.i < 0)
+          r1.i = UNDEFINED;
+        else if (r2.i < 64)
           r1.i = r1.i << r2.i;
         else
           r1.i = 0;
@@ -458,7 +462,9 @@ int yr_execute_code(
           rule->ns->t_flags[tidx] |= NAMESPACE_TFLAGS_UNSATISFIED_GLOBAL;
 
         #ifdef PROFILING_ENABLED
-        rule->clock_ticks += yr_stopwatch_elapsed_ns(&stopwatch, TRUE);
+        elapsed_time = yr_stopwatch_elapsed_us(&context->stopwatch);
+        rule->time_cost += (elapsed_time - start_time);
+        start_time = elapsed_time;
         #endif
 
         assert(sp == 0); // at this point the stack should be empty.
@@ -1157,25 +1163,24 @@ int yr_execute_code(
         assert(FALSE);
     }
 
-    if (context->timeout > 0)  // timeout == 0 means no timeout
+    // Check for timeout every 10 instruction cycles. If timeout == 0 it means
+    // no timeout at all.
+
+    if (context->timeout > 0L && ++cycle == 10)
     {
-      // Check for timeout every 10 instruction cycles.
+      elapsed_time = yr_stopwatch_elapsed_us(&context->stopwatch);
 
-      if (++cycle == 10)
+      if (elapsed_time > context->timeout)
       {
-        if (difftime(time(NULL), start_time) > context->timeout)
-        {
-          #ifdef PROFILING_ENABLED
-          assert(current_rule != NULL);
-          current_rule->clock_ticks += yr_stopwatch_elapsed_ns(
-              &stopwatch, FALSE);
-          #endif
-          result = ERROR_SCAN_TIMEOUT;
-          stop = TRUE;
-        }
-
-        cycle = 0;
+        #ifdef PROFILING_ENABLED
+        assert(current_rule != NULL);
+        current_rule->time_cost += elapsed_time - start_time;
+        #endif
+        result = ERROR_SCAN_TIMEOUT;
+        stop = TRUE;
       }
+
+      cycle = 0;
     }
   }
 
