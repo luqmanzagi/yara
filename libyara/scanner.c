@@ -47,8 +47,8 @@ static int _yr_scanner_scan_mem_block(
     YR_MEMORY_BLOCK* block)
 {
   YR_RULES* rules = scanner->rules;
-  YR_AC_TRANSITION_TABLE transition_table = rules->transition_table;
-  YR_AC_MATCH_TABLE match_table = rules->match_table;
+  YR_AC_TRANSITION_TABLE transition_table = rules->ac_transition_table;
+  YR_AC_MATCH_TABLE match_table = rules->ac_match_table;
 
   YR_AC_MATCH* match;
   YR_AC_TRANSITION transition;
@@ -90,7 +90,7 @@ static int _yr_scanner_scan_mem_block(
     {
       if (state != YR_AC_ROOT_STATE)
       {
-        state = transition_table[state] >> 32;
+        state = YR_AC_NEXT_STATE(transition_table[state]);
         transition = transition_table[state + index];
       }
       else
@@ -100,8 +100,7 @@ static int _yr_scanner_scan_mem_block(
       }
     }
 
-    state = transition >> 32;
-
+    state = YR_AC_NEXT_STATE(transition);
   }
 
   match = match_table[state].match;
@@ -342,6 +341,8 @@ YR_API int yr_scanner_scan_mem_blocks(
   int tidx = 0;
   int result = ERROR_SUCCESS;
 
+  uint64_t elapsed_time;
+
   if (scanner->callback == NULL)
     return ERROR_CALLBACK_REQUIRED;
 
@@ -354,12 +355,12 @@ YR_API int yr_scanner_scan_mem_blocks(
 
   yr_mutex_lock(&rules->mutex);
 
-  while (tidx < MAX_THREADS && YR_BITARRAY_TEST(rules->tidx_mask, tidx))
+  while (tidx < YR_MAX_THREADS && YR_BITARRAY_TEST(rules->tidx_mask, tidx))
   {
     tidx++;
   }
 
-  if (tidx < MAX_THREADS)
+  if (tidx < YR_MAX_THREADS)
     YR_BITARRAY_SET(rules->tidx_mask, tidx);
   else
     result = ERROR_TOO_MANY_SCAN_THREADS;
@@ -475,7 +476,20 @@ YR_API int yr_scanner_scan_mem_blocks(
 
 _exit:
 
-  scanner->rules->time_cost += yr_stopwatch_elapsed_us(&scanner->stopwatch);
+  elapsed_time = yr_stopwatch_elapsed_us(&scanner->stopwatch);
+
+  #ifdef PROFILING_ENABLED
+  yr_rules_foreach(rules, rule)
+  {
+    #ifdef _WIN32
+    InterlockedAdd64(&rule->time_cost, rule->time_cost_per_thread[tidx]);
+    #else
+    __sync_fetch_and_add(&rule->time_cost, rule->time_cost_per_thread[tidx]);
+    #endif
+
+    rule->time_cost_per_thread[tidx] = 0;
+  }
+  #endif
 
   _yr_scanner_clean_matches(scanner);
 
@@ -493,6 +507,7 @@ _exit:
 
   yr_mutex_lock(&rules->mutex);
   YR_BITARRAY_UNSET(rules->tidx_mask, tidx);
+  rules->time_cost += elapsed_time;
   yr_mutex_unlock(&rules->mutex);
 
   yr_set_tidx(-1);
