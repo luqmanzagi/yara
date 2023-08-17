@@ -5,17 +5,24 @@ Running YARA from the command-line
 **********************************
 
 In order to invoke YARA you’ll need two things: a file with the rules you want
-to use (either in source code or compiled form) and the target to be scanned.
-The target can be a file, a folder, or a process. ::
+to use and the target to be scanned. The target can be a file, a folder, or a
+process. ::
 
   yara [OPTIONS] RULES_FILE TARGET
 
+In YARA 3.8 and below ``RULES_FILE`` was allowed to be a file with rules in source
+form or in compiled form indistinctly. In YARA 3.9 you need to explicitly specify
+that ``RULES_FILE`` contains compiled rules by using the -C flag. ::
 
-``RULES_FILE`` can be passed directly in source code form, or can be previously
-compiled with the ``yarac`` tool. You may prefer to use your rules in compiled
-form if you are going to invoke YARA multiple times with the same rules. This
-way you’ll save time, because for YARA it is faster to load compiled rules than
-compiling the same rules over and over again.
+  yara [OPTIONS] -C RULES_FILE TARGET
+
+This is a security measure to prevent users from inadvertently using compiled
+rules coming from a third-party. Using compiled rules from untrusted sources can
+lead to the execution of malicious code in your computer.
+
+For compiling rules beforehand you can use the ``yarac`` tool. This way can save
+time, because for YARA it is faster to load compiled rules than compiling the
+same rules over and over again.
 
 You can also pass multiple source files to `yara` like in the following example::
 
@@ -42,33 +49,80 @@ Available options are:
 
 .. program:: yara
 
-.. option:: -t <tag> --tag=<tag>
+.. option:: -C --compiled-rules
 
-  Print rules tagged as <tag> and ignore the rest.
-
-.. option:: -i <identifier> --identifier=<identifier>
-
-  Print rules named <identifier> and ignore the rest.
+  RULES_FILE contains rules already compiled with yarac.
 
 .. option:: -c --count
 
   Print only number of matches.
 
-.. option:: -n
+.. option:: -d <identifier>=<value> --define=identifier=value
+
+  Define external variable. This option can be used multiple times.
+
+.. option:: --fail-on-warnings
+
+  Treat warnings as errors. Has no effect if used with --no-warnings.
+
+.. option:: -f --fast-scan
+
+  Fast matching mode.
+
+.. option:: -h --help
+
+  Show help.
+
+.. option:: -i <identifier> --identifier=<identifier>
+
+  Print rules named <identifier> and ignore the rest.
+
+.. option:: --max-process-memory-chunk=<size>
+
+  When scanning process memory read the data in chunks of the given size.
+
+.. option:: -l <number> --max-rules=<number>
+
+  Abort scanning after matching a number of rules.
+
+.. option:: --max-strings-per-rule=<number>
+
+  Set maximum number of strings per rule (default=10000). If a rule has more
+  then the specified number of strings an error will occur.
+
+  .. versionadded:: 3.7.0
+
+.. option:: -x <module>=<file> --module-data=<module>=<file>
+
+  Pass the content of <file> as data to <module>. Example: -x cuckoo=/cuckoo_report.json.
+
+.. option:: -n --negate
 
   Print not satisfied rules only (negate).
+
+.. option:: -N --no-follow-symlinks
+
+  Do not follow symlinks when scanning.
+
+.. option:: -w --no-warnings
+
+  Disable warnings.
+
+.. option:: -m --print-meta
+
+  Print metadata.
 
 .. option:: -D --print-module-data
 
   Print module data.
 
-.. option:: -g --print-tags
+.. option:: -e --print-namespace
 
-  Print tags.
+  Print rules' namespace.
 
-.. option:: -m --print-meta
+.. option:: -S --print-stats
 
-  Print metadata.
+  Print rules' statistics.
 
 .. option:: -s --print-strings
 
@@ -78,21 +132,23 @@ Available options are:
 
   Print length of matching strings.
 
-.. option:: -e --print-namespace
+.. option:: -g --print-tags
 
-  Print rules' namespace.
+  Print tags.
 
-.. option:: -p <number> --threads=<number>
+.. option:: -r --recursive
 
-  Use the specified <number> of threads to scan a directory.
+  Recursively search for directories. It follows symlinks.
 
-.. option:: -l <number> --max-rules=<number>
+.. option:: --scan-list
 
-  Abort scanning after matching a number of rules.
+  Scan files listed in FILE, one per line.
 
-.. option:: -a <seconds> --timeout=<seconds>
+.. option:: -z <size> --skip-larger=<size>
 
-  Abort scanning after a number of seconds has elapsed.
+  Skip files larger than the given <size> in bytes when scanning a directory.
+
+  .. versionadded:: 4.2.0
 
 .. option:: -k <slots> --stack-size=<slots>
 
@@ -101,44 +157,22 @@ Available options are:
 
   .. versionadded:: 3.5.0
 
-.. option:: --max-strings-per-rule=<number>
+.. option:: -t <tag> --tag=<tag>
 
-  Set maximum number of strings per rule (default=10000). If a rule has more
-  then the specified number of strings an error will occur.
+  Print rules tagged as <tag> and ignore the rest.
 
-  .. versionadded:: 3.7.0
+.. option:: -p <number> --threads=<number>
 
-.. option:: -d <identifier>=<value>
+  Use the specified <number> of threads to scan a directory.
 
-  Define external variable.
+.. option:: -a <seconds> --timeout=<seconds>
 
-.. option:: -x <module>=<file>
-
-  Pass file's content as extra data to module.
-
-.. option:: -r --recursive
-
-  Recursively search for directories.
-
-.. option:: -f --fast-scan
-
-  Fast matching mode.
-
-.. option:: -w --no-warnings
-
-  Disable warnings.
-
-.. option:: --fail-on-warnings
-
-  Treat warnings as errors. Has no effect if used with --no-warnings.
+  Abort scanning after a number of seconds has elapsed.
 
 .. option:: -v --version
 
   Show version information.
 
-.. option:: -h --help
-
-  Show help.
 
 Here you have some examples:
 
@@ -154,7 +188,7 @@ Here you have some examples:
 
 * Scan all files in the */foo* directory and its subdirectories::
 
-    yara -r /foo
+    yara /foo/bar/rules -r /foo
 
 * Defines three external variables *mybool*, *myint* and *mystring*::
 

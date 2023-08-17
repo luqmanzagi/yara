@@ -17,6 +17,9 @@ are:
 .B "    --atom-quality-table"
 Path to a file with the atom quality table.
 .TP
+.B \-C " --compiled-rules"
+RULES_FILE contains rules already compiled with yarac.
+.TP
 .B \-c " --count"
 Print number of matches only.
 .TP
@@ -34,6 +37,11 @@ Speeds up scanning by searching only for the first occurrence of each pattern.
 Print rules named
 .I identifier
 and ignore the rest. This option can be used multiple times.
+.TP
+.BI "    --max-process-memory-chunk=" size
+While scanning process memory read data in chunks of the given
+.I size
+in bytes.
 .TP
 .BI \-l " number" " --max-rules=" number
 Abort scanning after a
@@ -59,10 +67,13 @@ Print metadata associated to the rule.
 .B \-D " --print-module-data"
 Print module data.
 .TP
-.B \-g " --print-namespace"
+.B \-M " --module-names"
+show module names
+.TP
+.B \-e " --print-namespace"
 Print namespace associated to the rule.
 .TP
-.B \-D " --print-stats"
+.B \-S " --print-stats"
 Print rules' statistics.
 .TP
 .B \-s " --print-strings"
@@ -71,11 +82,22 @@ Print strings found in the file.
 .B \-L " --print-string-length"
 Print length of strings found in the file.
 .TP
+.B \-X " --print-xor-key"
+Print xor key of matched strings.
+.TP
 .B \-g " --print-tags"
 Print the tags associated to the rule.
 .TP
 .B \-r " --recursive"
-Scan files in directories recursively.
+Scan files in directories recursively. It follows symlinks.
+.TP
+.BI "    --scan-list"
+Scan files listed in FILE, one per line.
+.TP
+.BI \-z " size" " --skip-larger=" size
+Skip files larger than the given
+.I size
+in bytes when scanning a directory.
 .TP
 .BI \-k " slots" " --stack-size=" slots
 Set maximum stack size to the specified number of
