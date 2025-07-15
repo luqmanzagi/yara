@@ -63,10 +63,6 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #define ERROR_COULD_NOT_CREATE_THREAD 100
 
-#ifndef MAX_PATH
-#define MAX_PATH 256
-#endif
-
 #ifndef min
 #define min(x, y) ((x < y) ? (x) : (y))
 #endif
@@ -157,8 +153,10 @@ static bool ignore_warnings = false;
 static bool fast_scan = false;
 static bool negate = false;
 static bool print_count_only = false;
+static bool strict_escape = false;
 static bool fail_on_warnings = false;
 static bool rules_are_compiled = false;
+static bool disable_console_logs = false;
 static long total_count = 0;
 static long limit = 0;
 static long timeout = 1000000;
@@ -191,6 +189,12 @@ args_option_t options[] = {
         &print_count_only,
         _T("print only number of matches")),
 
+    OPT_BOOLEAN(
+        'E',
+        _T("strict-escape"),
+        &strict_escape,
+        _T("warn on unknown escape sequences")),
+
     OPT_STRING_MULTI(
         'd',
         _T("define"),
@@ -198,6 +202,12 @@ args_option_t options[] = {
         MAX_ARGS_EXT_VAR,
         _T("define external variable"),
         _T("VAR=VALUE")),
+
+    OPT_BOOLEAN(
+        'q',
+        _T("disable-console-logs"),
+        &disable_console_logs,
+        _T("disable printing console log messages")),
 
     OPT_BOOLEAN(
         0,
@@ -477,9 +487,9 @@ static bool is_directory(const char_t* path)
 static int scan_dir(const char_t* dir, SCAN_OPTIONS* scan_opts)
 {
   int result = ERROR_SUCCESS;
-  char_t path[MAX_PATH];
+  char_t path[YR_MAX_PATH];
 
-  _sntprintf(path, MAX_PATH, _T("%s\\*"), dir);
+  _sntprintf(path, YR_MAX_PATH, _T("%s\\*"), dir);
 
   WIN32_FIND_DATA FindFileData;
   HANDLE hFind = FindFirstFile(path, &FindFileData);
@@ -488,7 +498,7 @@ static int scan_dir(const char_t* dir, SCAN_OPTIONS* scan_opts)
   {
     do
     {
-      _sntprintf(path, MAX_PATH, _T("%s\\%s"), dir, FindFileData.cFileName);
+      _sntprintf(path, YR_MAX_PATH, _T("%s\\%s"), dir, FindFileData.cFileName);
 
       if (!(FindFileData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
       {
@@ -657,12 +667,14 @@ static int scan_dir(const char* dir, SCAN_OPTIONS* scan_opts)
   {
     struct dirent* de = readdir(dp);
 
+    char* full_path = calloc(YR_MAX_PATH, sizeof(char));
+    const size_t full_path_size = YR_MAX_PATH * sizeof(char);
+
     while (de && result != ERROR_SCAN_TIMEOUT)
     {
-      char full_path[MAX_PATH];
       struct stat st;
 
-      snprintf(full_path, sizeof(full_path), "%s/%s", dir, de->d_name);
+      snprintf(full_path, full_path_size, "%s/%s", dir, de->d_name);
 
       int err = lstat(full_path, &st);
 
@@ -674,14 +686,15 @@ static int scan_dir(const char* dir, SCAN_OPTIONS* scan_opts)
         de = readdir(dp);
         continue;
       }
-      // If the directory entry is a symlink, check if it points to . and
-      // skip it in that case.
+      // If the directory entry is a symlink, check if it points to . or .. and
+      // skip it in those cases.
       else if (S_ISLNK(st.st_mode))
       {
         char buf[2];
         int len = readlink(full_path, buf, sizeof(buf));
 
-        if (len == 1 && buf[0] == '.')
+        if ((len == 1 && buf[0] == '.') ||
+            (len == 2 && buf[0] == '.' && buf[1] == '.'))
         {
           de = readdir(dp);
           continue;
@@ -720,6 +733,7 @@ static int scan_dir(const char* dir, SCAN_OPTIONS* scan_opts)
       de = readdir(dp);
     }
 
+    free(full_path);
     closedir(dp);
   }
 
@@ -796,7 +810,7 @@ static char cescapes[] = {
     0, 0, 0, 0, 0, 0, 0, 0,   0,   0,   0,   0,   0,   0,   0, 0,
 };
 
-static void print_escaped(const uint8_t* data, size_t length)
+static void print_escaped_data(const uint8_t* data, size_t length)
 {
   for (size_t i = 0; i < length; i++)
   {
@@ -819,6 +833,20 @@ static void print_escaped(const uint8_t* data, size_t length)
         _tprintf(_T("\\%03o"), data[i]);
     }
   }
+}
+
+void print_escaped_file_path(const char_t* str) {
+    for (size_t i = 0; str[i] != '\0'; ++i) {
+        if (str[i] == _T('\n')) {
+            _tprintf(_T("\\n"));
+        } else if (str[i] == _T('\r')) {
+            _tprintf(_T("\\r"));
+        }
+        else {
+            _tprintf(_T("%c"), str[i]);
+        }
+    }
+    _tprintf(_T("\n"));
 }
 
 static void print_hex_string(const uint8_t* data, int length)
@@ -1084,7 +1112,7 @@ static int handle_message(
         else
         {
           _tprintf(_T("%" PF_S "=\""), meta->identifier);
-          print_escaped((uint8_t*) (meta->string), strlen(meta->string));
+          print_escaped_data((uint8_t*) (meta->string), strlen(meta->string));
           _tprintf(_T("\""));
         }
       }
@@ -1092,7 +1120,7 @@ static int handle_message(
       _tprintf(_T("] "));
     }
 
-    _tprintf(_T("%s\n"), ((CALLBACK_ARGS*) data)->file_path);
+    print_escaped_file_path(((CALLBACK_ARGS*) data)->file_path);
 
     // Show matched strings.
 
@@ -1267,7 +1295,8 @@ static int callback(
     return CALLBACK_CONTINUE;
 
   case CALLBACK_MSG_CONSOLE_LOG:
-    _tprintf(_T("%" PF_S "\n"), (char*) message_data);
+    if (!disable_console_logs)
+      _tprintf(_T("%" PF_S "\n"), (char*) message_data);
     return CALLBACK_CONTINUE;
   }
 
@@ -1556,6 +1585,11 @@ int _tmain(int argc, const char_t** argv)
     cr.warnings = 0;
 
     yr_compiler_set_callback(compiler, print_compiler_error, &cr);
+
+    if (strict_escape)
+      compiler->strict_escape = true;
+    else
+      compiler->strict_escape = false;
 
     if (!compile_files(compiler, argc, argv))
       exit_with_code(EXIT_FAILURE);

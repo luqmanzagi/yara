@@ -39,6 +39,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <yara/simple_str.h>
 #include <yara/utils.h>
 #include "../crypto.h"
+#include "../exception.h"
 
 #define MODULE_NAME elf
 
@@ -82,7 +83,7 @@ define_function(telfhash)
   int symbol_count = 0;
   char** clean_names = yr_calloc(list->count, sizeof(*clean_names));
 
-  if (!clean_names)
+  if (clean_names == NULL && list->count > 0)
     return_string(YR_UNDEFINED);
 
   for (ELF_SYMBOL* i = list->symbols; i != NULL; i = i->next)
@@ -790,20 +791,24 @@ static const char* str_table_entry(
                                                                                           \
         if (yr_##bo##32toh(segment->type) == ELF_PT_DYNAMIC)                              \
         {                                                                                 \
-          elf##bits##_dyn_t* dyn =                                                        \
-              (elf##bits##_dyn_t*) (elf_raw + yr_##bo##bits##toh(segment->offset));       \
-                                                                                          \
-          for (j = 0; IS_VALID_PTR(elf, elf_size, dyn); dyn++, j++)                       \
+          j = 0;                                                                          \
+          if (yr_##bo##bits##toh(segment->offset) < elf_size)                             \
           {                                                                               \
-            yr_set_integer(                                                               \
-                yr_##bo##bits##toh(dyn->tag), elf_obj, "dynamic[%i].type", j);            \
-            yr_set_integer(                                                               \
-                yr_##bo##bits##toh(dyn->val), elf_obj, "dynamic[%i].val", j);             \
+            elf##bits##_dyn_t* dyn =                                                      \
+                (elf##bits##_dyn_t*) (elf_raw + yr_##bo##bits##toh(segment->offset));     \
                                                                                           \
-            if (dyn->tag == ELF_DT_NULL)                                                  \
+            for (j = 0; IS_VALID_PTR(elf, elf_size, dyn); dyn++, j++)                     \
             {                                                                             \
-              j++;                                                                        \
-              break;                                                                      \
+              yr_set_integer(                                                             \
+                  yr_##bo##bits##toh(dyn->tag), elf_obj, "dynamic[%i].type", j);          \
+              yr_set_integer(                                                             \
+                  yr_##bo##bits##toh(dyn->val), elf_obj, "dynamic[%i].val", j);           \
+                                                                                          \
+              if (dyn->tag == ELF_DT_NULL)                                                \
+              {                                                                           \
+                j++;                                                                      \
+                break;                                                                    \
+              }                                                                           \
             }                                                                             \
           }                                                                               \
           yr_set_integer(j, elf_obj, "dynamic_section_entries");                          \
@@ -1113,7 +1118,7 @@ int module_load(
 
   foreach_memory_block(iterator, block)
   {
-    const uint8_t* block_data = block->fetch_data(block);
+    const uint8_t* block_data = yr_fetch_block_data(block);
 
     if (block_data == NULL)
       continue;
@@ -1123,91 +1128,79 @@ int module_load(
       return ERROR_INSUFFICIENT_MEMORY;
 
     module_object->data = elf;
-    switch (get_elf_class_data(block_data, block->size))
+    int class_data = get_elf_class_data(block_data, block->size);
+
+    if (class_data == CLASS_DATA(ELF_CLASS_32, ELF_DATA_2LSB) &&
+        block->size > sizeof(elf32_header_t))
     {
-    case CLASS_DATA(ELF_CLASS_32, ELF_DATA_2LSB):
+      elf_header32 = (elf32_header_t*) block_data;
 
-      if (block->size > sizeof(elf32_header_t))
+      if (!(context->flags & SCAN_FLAGS_PROCESS_MEMORY) ||
+          yr_le16toh(elf_header32->type) == ELF_ET_EXEC)
       {
-        elf_header32 = (elf32_header_t*) block_data;
-
-        if (!(context->flags & SCAN_FLAGS_PROCESS_MEMORY) ||
-            yr_le16toh(elf_header32->type) == ELF_ET_EXEC)
-        {
-          parse_result = parse_elf_header_32_le(
-              elf,
-              elf_header32,
-              block->base,
-              block->size,
-              context->flags,
-              module_object);
-        }
+        parse_result = parse_elf_header_32_le(
+            elf,
+            elf_header32,
+            block->base,
+            block->size,
+            context->flags,
+            module_object);
+        break;
       }
+    } else if (
+        class_data == CLASS_DATA(ELF_CLASS_32, ELF_DATA_2MSB) &&
+        block->size > sizeof(elf32_header_t))
+    {
+      elf_header32 = (elf32_header_t*) block_data;
 
-      break;
-
-    case CLASS_DATA(ELF_CLASS_32, ELF_DATA_2MSB):
-
-      if (block->size > sizeof(elf32_header_t))
+      if (!(context->flags & SCAN_FLAGS_PROCESS_MEMORY) ||
+          yr_be16toh(elf_header32->type) == ELF_ET_EXEC)
       {
-        elf_header32 = (elf32_header_t*) block_data;
-
-        if (!(context->flags & SCAN_FLAGS_PROCESS_MEMORY) ||
-            yr_be16toh(elf_header32->type) == ELF_ET_EXEC)
-        {
-          parse_result = parse_elf_header_32_be(
-              elf,
-              elf_header32,
-              block->base,
-              block->size,
-              context->flags,
-              module_object);
-        }
+        parse_result = parse_elf_header_32_be(
+            elf,
+            elf_header32,
+            block->base,
+            block->size,
+            context->flags,
+            module_object);
+        break;
       }
+    } else if (
+        class_data == CLASS_DATA(ELF_CLASS_64, ELF_DATA_2LSB) &&
+        block->size > sizeof(elf64_header_t))
+    {
+      elf_header64 = (elf64_header_t*) block_data;
 
-      break;
-
-    case CLASS_DATA(ELF_CLASS_64, ELF_DATA_2LSB):
-
-      if (block->size > sizeof(elf64_header_t))
+      if (!(context->flags & SCAN_FLAGS_PROCESS_MEMORY) ||
+          yr_le16toh(elf_header64->type) == ELF_ET_EXEC)
       {
-        elf_header64 = (elf64_header_t*) block_data;
-
-        if (!(context->flags & SCAN_FLAGS_PROCESS_MEMORY) ||
-            yr_le16toh(elf_header64->type) == ELF_ET_EXEC)
-        {
-          parse_result = parse_elf_header_64_le(
-              elf,
-              elf_header64,
-              block->base,
-              block->size,
-              context->flags,
-              module_object);
-        }
+        parse_result = parse_elf_header_64_le(
+            elf,
+            elf_header64,
+            block->base,
+            block->size,
+            context->flags,
+            module_object);
+        break;
       }
+    } else if (
+        class_data == CLASS_DATA(ELF_CLASS_64, ELF_DATA_2MSB) &&
+        block->size > sizeof(elf64_header_t))
+    {
+      elf_header64 = (elf64_header_t*) block_data;
 
-      break;
-
-    case CLASS_DATA(ELF_CLASS_64, ELF_DATA_2MSB):
-
-      if (block->size > sizeof(elf64_header_t))
+      if (!(context->flags & SCAN_FLAGS_PROCESS_MEMORY) ||
+          yr_be16toh(elf_header64->type) == ELF_ET_EXEC)
       {
-        elf_header64 = (elf64_header_t*) block_data;
-
-        if (!(context->flags & SCAN_FLAGS_PROCESS_MEMORY) ||
-            yr_be16toh(elf_header64->type) == ELF_ET_EXEC)
-        {
-          parse_result = parse_elf_header_64_be(
-              elf,
-              elf_header64,
-              block->base,
-              block->size,
-              context->flags,
-              module_object);
-        }
+        parse_result = parse_elf_header_64_be(
+            elf,
+            elf_header64,
+            block->base,
+            block->size,
+            context->flags,
+            module_object);
+        break;
       }
-
-      break;
     }
   }
 

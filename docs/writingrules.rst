@@ -324,7 +324,7 @@ encoding format used by your text editor. This never meant to be a feature, the
 original intention always was that YARA strings should be ASCII-only and YARA
 4.1.0 started to raise warnings about non-ASCII characters in strings. This
 limitation does not apply to strings in the metadata section or comments. See
-more details [here](https://github.com/VirusTotal/yara/wiki/Unicode-characters-in-YARA)
+more details `here <https://github.com/VirusTotal/yara/wiki/Unicode-characters-in-YARA>`_.
 
 
 Case-insensitive strings
@@ -425,7 +425,7 @@ The above rule is logically equivalent to:
             any of them
     }
 
-You can also combine the ``xor`` modifier with ``wide`` and ``ascii``
+You can also combine the ``xor`` modifier with ``fullword``, ``wide``, and ``ascii``
 modifiers. For example, to search for the ``wide`` and ``ascii`` versions of a
 string after every single byte XOR has been applied you would use:
 
@@ -465,7 +465,7 @@ equivalent:
             any of them
     }
 
-Since YARA 3.11, if you want more control over the range of bytes used with the ``xor`` modifier use:
+Since YARA 3.11, if you want more control over the range of bytes used with the ``xor`` modifier, use:
 
 .. code-block:: yara
 
@@ -598,8 +598,8 @@ new-line characters. For example:
     }
 
 Notice that ``/foo/i`` is equivalent to ``/foo/ nocase``, but we recommend the
-latter when defining strings. The ``/foo/i`` syntax is useful when writting
-case-insentive regular expressions for the ``matches`` operator.
+latter when defining strings. The ``/foo/i`` syntax is useful when writing
+case-insensitive regular expressions for the ``matches`` operator.
 
 In previous versions of YARA, external libraries like PCRE and RE2 were used
 to perform regular expression matching, but starting with version 2.0 YARA uses
@@ -736,6 +736,26 @@ the C API.
 
         condition:
             $text_string
+    }
+
+Unreferenced strings
+--------------------
+
+YARA 4.5.0 allows for unreferenced strings in the condition. If a string
+identifier starts with an ``_`` then it does not have to be referenced in the
+condition. Any other string must be referenced in the condition. This is useful
+if you want to search for particular strings and handle them in a custom
+callback but don't really need them for your condition logic.
+
+.. code-block:: yara
+
+    rule PrivateStringExample
+    {
+        strings:
+            $_unreferenced = "AXSERS"
+
+        condition:
+            true
     }
 
 String Modifier Summary
@@ -1320,7 +1340,7 @@ using the syntax: @a[i], where i is an index indicating which occurrence
 of the string $a you are referring to. (@a[1], @a[2],...).
 
 Sometimes you will need to iterate over some of these offsets and guarantee
-they satisfy a given condition. In such cases you can use the ``for..in`` syntax, 
+they satisfy a given condition. In such cases you can use the ``for..in`` syntax,
 for example:
 
 .. code-block:: yara
@@ -1337,7 +1357,7 @@ for example:
 
 The previous rule says that the first occurrence of $b should be 10 bytes
 after the first occurrence of $a, and the same should happen with the second
-and third ocurrences of the two strings.
+and third occurrences of the two strings.
 
 The same condition could be written also as:
 
@@ -1367,8 +1387,8 @@ applies here:
     for 2 i in (1..#a) : ( @a[i] < 100 )
 
 The ``for..in`` operator is similar to ``for..of``, but the latter iterates over
-a set of strings, while the former iterates over ranges, enumerations, arrays and 
-dictionaries. 
+a set of strings, while the former iterates over ranges, enumerations, arrays and
+dictionaries.
 
 
 Iterators

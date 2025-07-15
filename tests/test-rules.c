@@ -512,6 +512,17 @@ static void test_syntax()
       "rule test { strings: $a = \"a\" condition: for 3.14159 of them: ($) }",
       ERROR_INVALID_VALUE);
 
+  assert_error(
+      "rule test { strings: $a = \"a\" condition: true }",
+      ERROR_UNREFERENCED_STRING);
+
+  // String identifiers prefixed with '_' are allowed to be unreferenced.
+  // Any unreferenced string must be searched for anywhere.
+  assert_string_capture(
+      "rule test { strings: $a = \"AXS\" $_b = \"ERS\" condition: $a }",
+      "AXSERS",
+      "ERS");
+
   YR_DEBUG_FPRINTF(1, stderr, "} // %s()\n", __FUNCTION__);
 }
 
@@ -522,6 +533,11 @@ static void test_anonymous_strings()
   assert_true_rule(
       "rule test { strings: $ = \"a\" $ = \"b\" condition: all of them }",
       "ab");
+
+  // Anonymous strings must be referenced.
+  assert_error(
+      "rule test { strings: $ = \"a\" condition: true }",
+      ERROR_UNREFERENCED_STRING);
 
   YR_DEBUG_FPRINTF(1, stderr, "} // %s()\n", __FUNCTION__);
 }
@@ -1613,6 +1629,19 @@ static void test_hex_strings()
         condition: $a }",
       "1234567890");
 
+  // Test case for https://github.com/VirusTotal/yara/issues/2065
+  uint8_t ISSUE_2065[] = {0x81, 0xEC, 0x38, 0x01, 0x00, 0x00, 0x00, 0x00,
+                          0xB8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                          0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                          0x00, 0x00, 0x00, 0x00, 0x00, 0xB8, 0x00, 0x00,
+                          0x00, 0x00, 0x44, 0x55, 0x66, 0x77};
+
+  assert_true_rule_blob(
+      "rule test { \
+        strings: $a = { 81 EC 38 01 [4-25] B8 ?? ?? ?? ?? [20-21] 44 55 66 77  } \
+        condition: $a }",
+      ISSUE_2065);
+
   assert_error(
       "rule test { \
         strings: $a = { 01 [0] 02 } \
@@ -2419,9 +2448,17 @@ void test_re()
       "rule test { strings: $a = /abc\\b/ wide condition: $a }",
       TEXT_1024_BYTES "a\0b\0c\0b\t");
 
-  assert_false_rule_blob(
+  assert_false_rule(
       "rule test { strings: $a = /\\b/ wide condition: $a }",
       TEXT_1024_BYTES "abc");
+
+  assert_true_rule(
+      "rule test { condition: \"avb\" matches /a\\vb/ }",
+      TEXT_1024_BYTES "rule test { condition: \"avb\" matches /a\\vb/ }");
+
+  assert_false_rule(
+      "rule test { condition: \"ab\" matches /a\\vb/ }",
+      TEXT_1024_BYTES "rule test { condition: \"ab\" matches /a\\vb/ }");
 
   assert_regexp_syntax_error(")");
   assert_true_regexp("abc", "abc", "abc");
@@ -2473,10 +2510,15 @@ void test_re()
   assert_true_regexp("a.b{2,3}cccc", "aabbbcccc", "aabbbcccc");
   assert_true_regexp("ab{2,3}c", "abbbc", "abbbc");
   assert_true_regexp("ab{2,3}?c", "abbbc", "abbbc");
+  assert_true_regexp("ab{2, 3}c", "abbbc", "abbbc");
+  assert_true_regexp("ab{2 ,3}c", "abbbc", "abbbc");
+  assert_true_regexp("ab{2  ,  3}c", "abbbc", "abbbc");
   assert_true_regexp("ab{0,1}?c", "abc", "abc");
   assert_true_regexp("a{0,1}?bc", "abc", "abc");
   assert_true_regexp("a{0,1}bc", "bbc", "bc");
   assert_true_regexp("a{0,1}?bc", "abc", "bc");
+  assert_true_regexp("a{,0}", "a", "");
+  assert_true_regexp("a{,0}", "x", "");
   assert_true_regexp("aa{0,1}?bc", "abc", "abc");
   assert_true_regexp("aa{0,1}?bc", "abc", "abc");
   assert_true_regexp("aa{0,1}bc", "abc", "abc");
@@ -2550,6 +2592,8 @@ void test_re()
   assert_true_regexp("a[b-]", "a-", "a-");
   assert_true_regexp("a[b-]", "ab", "ab");
   assert_true_regexp("[a-c-e]", "b", "b");
+  assert_true_regexp("[a-c-e]+", "abc", "abc");
+  assert_true_regexp("[*-_]+", "ABC", "ABC");
   assert_true_regexp("[a-c-e]", "-", "-");
   assert_false_regexp("[a-c-e]", "d");
   assert_regexp_syntax_error("[b-a]");
@@ -2596,7 +2640,8 @@ void test_re()
   assert_true_regexp("[\\x01-\\x03]+", "\x01\x02\x03", "\x01\x02\x03");
   assert_false_regexp("[\\x00-\\x02]+", "\x03\x04\x05");
   assert_true_regexp("[\\x5D]", "]", "]");
-  assert_true_regexp("[\\0x5A-\\x5D]", "\x5B", "\x5B");
+  assert_true_regexp("[\\x5A-\\x5D]", "\x5B", "\x5B");
+  assert_false_regexp("[\\x5A-\\x5D]", "\x4F");
   assert_true_regexp("[\\x5D-\\x5F]", "\x5E", "\x5E");
   assert_true_regexp("[\\x5C-\\x5F]", "\x5E", "\x5E");
   assert_true_regexp("[\\x5D-\\x5F]", "\x5E", "\x5E");
@@ -2613,8 +2658,10 @@ void test_re()
   assert_false_regexp("^(ab|cd)e", "abcde");
   assert_true_regexp("(abc|)ef", "abcdef", "ef");
   assert_true_regexp("(abc|)ef", "abcef", "abcef");
+  assert_true_regexp("(abc|)", "foo", "");
   assert_true_regexp("\\babc", "abc", "abc");
   assert_true_regexp("abc\\b", "abc", "abc");
+  assert_true_regexp("\\b", "abc", "");
   assert_false_regexp("\\babc", "1abc");
   assert_false_regexp("abc\\b", "abc1");
   assert_true_regexp("abc\\s\\b", "abc x", "abc ");
@@ -2673,6 +2720,8 @@ void test_re()
   assert_false_regexp("(bc+d$|ef*g.|h?i(j|k))", "effg");
   assert_false_regexp("(bc+d$|ef*g.|h?i(j|k))", "bcdd");
   assert_true_regexp("(bc+d$|ef*g.|h?i(j|k))", "reffgz", "effgz");
+  assert_true_regexp("abcx{0,0}", "abcx", "abc");
+  assert_true_regexp("abcx{0}", "abcx", "abc");
 
   // Test case for issue #324
   assert_true_regexp("whatever|   x.   x", "   xy   x", "   xy   x");
@@ -2680,9 +2729,6 @@ void test_re()
   // Test case for issue #503, \x without two following hex-digits
   assert_regexp_syntax_error("\\x0");
   assert_regexp_syntax_error("\\x");
-
-  assert_regexp_syntax_error("x{0,0}");
-  assert_regexp_syntax_error("x{0}");
 
   assert_regexp_syntax_error("\\xxy");
 
@@ -2765,6 +2811,13 @@ void test_re()
   assert_true_rule(
       "rule test { strings: $a = /abc[^F]/ condition: $a }",
       TEXT_1024_BYTES "abcd");
+
+  assert_true_rule(
+      "rule test { strings: $a = /[*-_]+/ nocase condition: !a == 3 }", "abc");
+
+  assert_true_rule(
+      "rule test { strings: $a = /([$&#*-_!().])+/ nocase condition: !a == 6 }",
+      "ABCabc");
 
   // Test case for issue #1006
   assert_false_rule_blob(
@@ -2927,6 +2980,12 @@ static void test_matches_operator()
   assert_false_rule(
       "rule test { condition: \"foo\\nbar\" matches /foo.*bar/ }", NULL);
 
+  assert_true_rule("rule test { condition: \"\" matches /foo|/ }", NULL);
+
+  assert_true_rule("rule test { condition: \"\" matches /a||b/ }", NULL);
+
+  assert_false_rule("rule test { condition: \"\" matches /foobar/ }", NULL);
+
   YR_DEBUG_FPRINTF(1, stderr, "} // %s()\n", __FUNCTION__);
 }
 
@@ -2953,6 +3012,36 @@ static void test_global_rules()
         condition: true \
       }",
       NULL);
+
+  assert_false_rule(
+      "global private rule global_rule { \
+        strings: \
+          $a = \"foo\" \
+        condition: \
+          $a \
+      } \
+      rule test { \
+       strings: \
+          $a = \"bar\" \
+        condition: \
+          $a \
+      }",
+      "bar");
+
+  assert_true_rule(
+      "global private rule global_rule { \
+        strings: \
+          $a = \"foo\" \
+        condition: \
+          $a \
+      } \
+      rule test { \
+       strings: \
+          $a = \"bar\" \
+        condition: \
+          $a \
+      }",
+      "foobar");
 
   YR_DEBUG_FPRINTF(1, stderr, "} // %s()\n", __FUNCTION__);
 }
@@ -3526,6 +3615,51 @@ void test_process_scan()
 }
 #endif
 
+void test_invalid_escape_sequences_warnings()
+{
+  YR_DEBUG_FPRINTF(1, stderr, "+ %s() {\n", __FUNCTION__);
+
+  assert_warning_strict_escape(
+      "rule test { strings: $a = /ab\\cdef/ condition: $a }");
+  assert_warning_strict_escape(
+      "rule test { strings: $a = /ab\\ def/ condition: $a }");
+  assert_warning_strict_escape(
+      "rule test { strings: $a = /ab\\;def/ condition: $a }");
+  assert_no_warnings("rule test { strings: $a = /ab\\*def/ condition: $a }");
+  assert_no_warnings("rule test { strings: $a = /abcdef/ condition: $a }");
+  assert_warning_strict_escape(
+      "rule test { strings: $a = /ab\\cdef/ condition: $a }");
+  assert_no_warnings("rule test { strings: $a = /abcdef/ condition: $a }");
+  assert_warning_strict_escape(
+      "rule test { strings: $a = "
+      "/\\\\WINDOWS\\\\system32\\\\\\victim\\.exe\\.exe/ condition: $a }");
+  assert_no_warnings(
+      "rule test { strings: $a = "
+      "/\\\\WINDOWS\\\\system32\\\\victim\\.exe\\.exe/ condition: $a }");
+  assert_warning_strict_escape("rule test { strings: $a = "
+                               "/AppData\\\\Roaming\\\\[0-9]{9,12}"
+                               "\\VMwareCplLauncher\\.exe/ condition: $a }");
+  assert_no_warnings("rule test { strings: $a = "
+                     "/AppData\\\\Roaming\\\\[0-9]{9,12}"
+                     "\\\\VMwareCplLauncher\\.exe/ condition: $a }");
+  assert_warning_strict_escape(
+      "rule test { strings: $a = /ab[\\000-\\343]/ condition: $a }");
+  assert_no_warnings(
+      "rule test { strings: $a = /ab[\\x00-\\x43]/ condition: $a }");
+  assert_warning_strict_escape(
+      "rule test { strings: $a = "
+      "/C:\\Users\\\\[^\\\\]+\\\\AppData\\\\Local\\\\AzireVPN\\\\token\\.txt/ "
+      "condition: $a }");
+  assert_no_warnings(
+      "rule test { strings: $a = "
+      "/C:\\\\Users\\\\[^\\\\]+\\\\AppData\\\\Local\\\\AzireVPN\\\\token\\.txt/"
+      " condition: $a }");
+  assert_warning_strict_escape(
+      "rule test { condition: \"avb\" matches /a\\vb/ }");
+
+  YR_DEBUG_FPRINTF(1, stderr, "} // %s()\n", __FUNCTION__);
+}
+
 void test_performance_warnings()
 {
   YR_DEBUG_FPRINTF(1, stderr, "+ %s() {\n", __FUNCTION__);
@@ -3787,6 +3921,8 @@ void test_defined()
 
 static void test_pass(int pass)
 {
+  YR_DEBUG_FPRINTF(1, stderr, "+ %s() { \n", __FUNCTION__);
+
   switch (pass)
   {
   case 1:
@@ -3877,6 +4013,7 @@ static void test_pass(int pass)
 #endif
 
   test_time_module();
+  test_invalid_escape_sequences_warnings();
   test_performance_warnings();
   test_defined();
 

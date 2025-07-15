@@ -1,4 +1,4 @@
-AC_INIT([yara], [4.3.0], [vmalvarez@virustotal.com])
+AC_INIT([yara], [4.5.4], [vmalvarez@virustotal.com])
 
 AM_SILENT_RULES([yes])
 AC_CONFIG_SRCDIR([cli/yara.c])
@@ -20,8 +20,6 @@ no_std_allocator="-fno-builtin-malloc -fno-builtin-calloc -fno-builtin-realloc -
 m4_ifdef([AM_PROG_AR], [AM_PROG_AR])
 
 AC_PROG_CC
-AC_PROG_CC_C99
-AM_PROG_CC_C_O
 AM_PROG_LEX
 AC_PROG_YACC
 
@@ -31,9 +29,6 @@ AC_PROG_YACC
 AC_C_INLINE
 # Defines WORDS_BIGENDIAN if building in a big-endian host.
 AC_C_BIGENDIAN
-
-# Arrange for 64-bit file offsets.
-AC_SYS_LARGEFILE
 
 LT_INIT
 AC_CANONICAL_HOST
@@ -63,7 +58,7 @@ AC_ARG_ENABLE([proc-scan],
              posix=true
              proc_interface=mach
              jemalloc_prefix=je_ ;;
-    mingw*|cygwin*) CFLAGS="$CFLAGS -DUSE_WINDOWS_PROC"
+    mingw*|msys*|cygwin*) CFLAGS="$CFLAGS -DUSE_WINDOWS_PROC"
             proc_interface=windows
             jemalloc_prefix= ;;
     linux*|netbsd*|dragonfly*|kfreebsd*)
@@ -256,6 +251,23 @@ AC_ARG_WITH([tcmalloc],
       AC_MSG_ERROR([please install https://github.com/gperftools/gperftools]))
     CFLAGS="$CFLAGS -DTCMALLOC $no_std_allocator"
     PC_REQUIRES_PRIVATE="$PC_REQUIRES_PRIVATE tcmalloc"
+  fi])
+
+AC_ARG_WITH([mimalloc],
+  [AS_HELP_STRING([--with-mimalloc],
+    [use mimalloc as the default heap allocator])],
+  [if test x$withval = xyes; then
+    if test "x$with_jemalloc" = "xyes"; then
+      AC_MSG_ERROR([Cannot compile with both mimalloc and jemalloc])
+    fi
+    if test "x$with_tcmalloc" = "xyes"; then
+      AC_MSG_ERROR([Cannot compile with both mimalloc and tcmalloc])
+    fi
+    mi_malloc=mi_malloc
+    AC_CHECK_LIB(mimalloc, $mi_malloc,,
+      AC_MSG_ERROR([please install https://github.com/microsoft/mimalloc]))
+    CFLAGS="$CFLAGS -DMIMALLOC $no_std_allocator"
+    PC_REQUIRES_PRIVATE="$PC_REQUIRES_PRIVATE mimalloc"
   fi])
 
 AC_ARG_WITH([cpu-profiler],
